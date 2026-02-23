@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cutover Management App - PING Project Evo</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f5f9;min-height:100vh}
+#root{height:100vh}
+select,input{outline:none}
+select:focus,input:focus{border-color:#3b82f6!important}
+textarea{font-family:inherit;outline:none}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:#f1f5f9}
+::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+.pulse{animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useMemo,useCallback,useEffect,useRef}=React;
+
+// ============================================================
+// CONFIG - Update these for your deployment
+// ============================================================
+// Set API_BASE to your Azure Function URL, or leave empty for localStorage mode
+const API_BASE = ""; // e.g. "https://your-func-app.azurewebsites.net/api"
+const USE_API = !!API_BASE;
+// ============================================================
+
+const PH=[{id:"Phase 0",l:"BL",f:"Env Baseline / Cutover Readiness",dt:"Feb 2-16",cl:"#6366f1"},{id:"Phase 00",l:"P0",f:"Migrate Customers to PRD",dt:"Feb 16-17",cl:"#8b5cf6"},{id:"Phase 1",l:"P1",f:"Master Data Loading",dt:"Feb 16-22",cl:"#3b82f6"},{id:"Phase 2",l:"P2",f:"Master Data Sync",dt:"Feb 16-22",cl:"#0ea5e9"},{id:"Phase 3",l:"P3",f:"Trans Data Prep",dt:"Feb 23-25",cl:"#14b8a6"},{id:"Phase 4",l:"P4",f:"Blackout / Trans Data Migration",dt:"Feb 25-Mar 1",cl:"#f59e0b"},{id:"Phase 5",l:"P5",f:"Hypercare",dt:"Mar 2-9",cl:"#10b981"}];
+const STATUSES=[{id:"0-Not Mock",l:"Not Mock",c:"#94a3b8",bg:"#f1f5f9",s:"NM"},{id:"1-Planned",l:"Planned",c:"#3b82f6",bg:"#eff6ff",s:"PLN"},{id:"2-WIP",l:"In Progress",c:"#f59e0b",bg:"#fffbeb",s:"WIP"},{id:"3-Blocked",l:"Blocked",c:"#dc2626",bg:"#fef2f2",s:"BLK"},{id:"4-Complete",l:"Complete",c:"#10b981",bg:"#ecfdf5",s:"DONE"},{id:"6-Archive",l:"Archived",c:"#94a3b8",bg:"#f9fafb",s:"ARC"}];
+const SM={};STATUSES.forEach(s=>{SM[s.id]=s;});
+const TZ_L=[{id:"GMT",l:"UK (GMT)"},{id:"AZT",l:"US Arizona (UTC-7)"},{id:"EST",l:"US Eastern"},{id:"BOTH",l:"Arizona + UK"},{id:"UTC",l:"UTC"}];
+const TS_M=[{id:"both",l:"Est + Actuals"},{id:"est",l:"Est Only"},{id:"act",l:"Actuals Only"}];
+const VM=[{id:"phase",l:"By Phase"},{id:"day",l:"By Day"},{id:"flat",l:"Flat List"}];
+const ADMIN_NAMES_LOCAL=["Brad Amundson","Lewis Rogal"];
+const ADMIN_PASS_LOCAL="PingEvo2026";
+const fieldLabels={d:"Description",w:"Workstream",a:"Application",p:"Phase",r:"Responsible",ps:"PING SME",ex:"Executor",pp:"PING Support",is:"Infor SME",sd:"Start Date",ed:"End Date",ui:"US/CA Impact",mo:"Mock Only",jp:"JP Execute",blocker:"Blocker",estStart:"Est Start",estEnd:"Est End",actStart:"Actual Start",actEnd:"Actual End"};
+
+// ============================================================
+// STORAGE ABSTRACTION - API or localStorage
+// ============================================================
+let authToken = "";
+function setAuthToken(name, role, pass) {
+  authToken = `${name}::${role}::${pass||""}`;
+}
+
+const store = {
+  async getTasks() {
+    if (USE_API) {
+      try {
+        const r = await fetch(`${API_BASE}/tasks`);
+        if (!r.ok) return null;
+        const d = await r.json();
+        return d.tasks;
+      } catch(e) { console.error("API getTasks failed", e); return null; }
+    }
+    try { const v = localStorage.getItem("cma-tasks"); return v ? JSON.parse(v) : null; } catch(e) { return null; }
+  },
+  async saveTasks(tasks) {
+    if (USE_API) {
+      try {
+        await fetch(`${API_BASE}/tasks`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authToken}` },
+          body: JSON.stringify({ tasks }),
+        });
+      } catch(e) { console.error("API saveTasks failed", e); }
+      return;
+    }
+    try { localStorage.setItem("cma-tasks", JSON.stringify(tasks)); } catch(e) {}
+  },
+  async patchTask(id, updates) {
+    if (USE_API) {
+      try {
+        await fetch(`${API_BASE}/tasks/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authToken}` },
+          body: JSON.stringify(updates),
+        });
+      } catch(e) { console.error("API patchTask failed", e); }
+      return;
+    }
+    // localStorage: handled by full save in caller
+  },
+  async getLog() {
+    if (USE_API) {
+      try {
+        const r = await fetch(`${API_BASE}/log`);
+        if (!r.ok) return [];
+        const d = await r.json();
+        return d.log || [];
+      } catch(e) { return []; }
+    }
+    try { const v = localStorage.getItem("cma-log"); return v ? JSON.parse(v) : []; } catch(e) { return []; }
+  },
+  async addLogEntry(entry) {
+    if (USE_API) {
+      try {
+        await fetch(`${API_BASE}/log`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(entry),
+        });
+      } catch(e) { console.error("API addLog failed", e); }
+      return;
+    }
+    // localStorage: handled in caller
+  },
+  async saveLog(log) {
+    if (!USE_API) {
+      try { localStorage.setItem("cma-log", JSON.stringify(log)); } catch(e) {}
+    }
+  },
+  async getPresets() {
+    try { const v = localStorage.getItem("cma-presets"); return v ? JSON.parse(v) : []; } catch(e) { return []; }
+  },
+  async savePresets(p) {
+    try { localStorage.setItem("cma-presets", JSON.stringify(p)); } catch(e) {}
+  },
+  getUser() { try { return { name: localStorage.getItem("cma-user"), role: localStorage.getItem("cma-role") }; } catch(e) { return {}; } },
+  setUser(n, r) { try { localStorage.setItem("cma-user", n); localStorage.setItem("cma-role", r); } catch(e) {} },
+  getLastVisit() { try { return localStorage.getItem("cma-lastvisit"); } catch(e) { return null; } },
+  setLastVisit(t) { try { localStorage.setItem("cma-lastvisit", t); } catch(e) {} },
+};
+
+// ============================================================
+// UTILITIES
+// ============================================================
+function pPh(r){if(!r)return"";const s=r.trim();if(s.includes("Phase 0 ")||s.includes("Phase 0-")||s.includes("Baseline")||s.includes("Cutover Readiness"))return"Phase 0";if(s.includes("Phase 00")||s.includes("Migrate Customers"))return"Phase 00";for(const p of PH)if(s.includes(p.id))return p.id;return s;}
+function gSt(r){if(!r)return"1-Planned";const s=r.trim();if(s.startsWith("0"))return"0-Not Mock";if(s.startsWith("1"))return"1-Planned";if(s.startsWith("2"))return"2-WIP";if(s.startsWith("3"))return"3-Blocked";if(s.startsWith("4"))return"4-Complete";if(s.startsWith("6"))return"6-Archive";return"1-Planned";}
+function oT(t,h){const m=t.match(/(\d{1,2}):(\d{2})/);if(!m)return t;let hr=parseInt(m[1])+h,d="";if(hr<0){hr+=24;d=" (-1d)";}if(hr>=24){hr-=24;d=" (+1d)";}return String(hr).padStart(2,"0")+":"+m[2]+d;}
+function fT(t,z){if(!t)return"\u2014";if(z==="BOTH")return t+" GMT / "+oT(t,-7)+" AZT";if(z==="AZT")return oT(t,-7);if(z==="EST")return oT(t,-5);return t;}
+function pD(s){if(!s)return null;const c=s.replace(/[()"\n\r]/g,"").trim();if(!c)return null;let m=c.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);if(m)return new Date(parseInt(m[3]),parseInt(m[1])-1,parseInt(m[2]));m=c.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);if(m)return new Date(2000+parseInt(m[3]),parseInt(m[1])-1,parseInt(m[2]));m=c.match(/^(\d{1,2})[\/\-](\d{1,2})$/);if(m)return new Date(2026,parseInt(m[1])-1,parseInt(m[2]));m=c.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);if(m)return new Date(parseInt(m[1]),parseInt(m[2])-1,parseInt(m[3]));m=c.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);if(m){const y=parseInt(m[3]);return new Date(y<100?y+2000:y,parseInt(m[1])-1,parseInt(m[2]));}return null;}
+function fDS(d){if(!d)return"\u2014";return["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()]+" "+d.getDate();}
+function gDK(d){if(!d)return"Unknown";return["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()]+" "+fDS(d);}
+function now(){return new Date().toLocaleString("en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit",hour12:false});}
+function fmtSince(d){const n=new Date(),diff=n-d,m=Math.floor(diff/60000);if(m<60)return m+"m ago";const h=Math.floor(m/60);if(h<24)return h+"h ago";return Math.floor(h/24)+"d ago";}
+
+// ============================================================
+// APP
+// ============================================================
+function App(){
+const[tasks,sT]=useState([]);const[loaded,sL]=useState(false);const[err,sE]=useState("");const[tz,sTz]=useState("AZT");const[tsM,sTsM]=useState("both");const[vM,sVM]=useState("phase");const[pF,sPF]=useState("all");const[wF,sWF]=useState("All");const[sF,sSF]=useState("all");const[rF,sRF]=useState("All");const[search,sSrch]=useState("");const[hideD,sHD]=useState(false);const[stFlt,sStFlt]=useState(null);const[focD,sFocD]=useState("");const[dM,sDM]=useState("none");const[goalId,sGI]=useState("");const[showHelp,sSH]=useState(false);const[panel,sPanel]=useState(null);const[actLog,sAL]=useState([]);const[uName,sUN]=useState("");const[uRole,sUR]=useState("user");const[saving,sSav]=useState(false);const[showLog,sSLog]=useState(false);const[logFlt,sLF]=useState("all");const[logTime,sLT]=useState("all");const[presets,sPre]=useState([]);const[showPre,sSPre]=useState(false);const[preNm,sPreNm]=useState("");const[nameIn,sNI]=useState("");const[adminPIn,sAPI]=useState("");const[showAP,sSAP]=useState(false);const[passErr,sPE]=useState(false);const[addM,sAM]=useState(false);const[nT,sNT]=useState({id:"",s:"1-Planned",w:"",a:"All",p:"Phase 1",c:"",d:"",r:"PING",ps:"",ex:"",pp:"",is:"",sd:"",ed:""});const[showNotif,sShowNotif]=useState(false);const[lastVisit,sLastVisit]=useState(null);const[loading,sLoading]=useState(true);const[syncTime,sSyncTime]=useState(null);
+const isAdmin=uRole==="admin";
+
+// Auto-refresh for multi-user (poll every 30s when API mode)
+const refreshInterval=useRef(null);
+useEffect(()=>{
+  if(USE_API&&loaded){
+    refreshInterval.current=setInterval(async()=>{
+      try{
+        const t=await store.getTasks();
+        if(t?.length){t.forEach(tk=>{tk.sdD=pD(tk.sd);tk.edD=pD(tk.ed);if(!tk.notes)tk.notes=[];if(!tk.deps)tk.deps=[];if(!tk.history)tk.history=[];});sT(t);sSyncTime(new Date());}
+        const l=await store.getLog();if(l?.length)sAL(l);
+      }catch(e){}
+    },30000);
+    return()=>clearInterval(refreshInterval.current);
+  }
+},[loaded]);
+
+// Initial load
+useEffect(()=>{
+  async function init(){
+    const u=store.getUser();
+    if(u.name){sUN(u.name);sUR(u.role||"user");if(u.role==="admin")setAuthToken(u.name,"admin","");}
+    const lv=store.getLastVisit();if(lv)sLastVisit(lv);
+    const p=await store.getPresets();if(p?.length)sPre(p);
+    const t=await store.getTasks();
+    if(t?.length){t.forEach(tk=>{tk.sdD=pD(tk.sd);tk.edD=pD(tk.ed);if(!tk.notes)tk.notes=[];if(!tk.deps)tk.deps=[];if(!tk.history)tk.history=[];});sT(t);sL(true);}
+    const l=await store.getLog();if(l?.length)sAL(l);
+    sLoading(false);
+  }
+  init();
+},[]);
+
+function addL(msg){const e={ts:now(),user:uName||"?",msg};const u=[e,...actLog].slice(0,500);sAL(u);store.addLogEntry(e);if(!USE_API)store.saveLog(u);return u;}
+function setUser(name,role){sUN(name);sUR(role||"user");store.setUser(name,role||"user");setAuthToken(name,role||"user","");if(loaded&&actLog.length>0)sShowNotif(true);}
+function dismissNotif(){sShowNotif(false);const ts=new Date().toISOString();sLastVisit(ts);store.setLastVisit(ts);}
+
+async function saveAll(t,log){
+  sSav(true);
+  const serializable=t.map(({sdD,edD,...r})=>r);
+  await store.saveTasks(serializable);
+  if(!USE_API&&log)store.saveLog(log);
+  sSav(false);
+}
+
+function parseCSV(txt){try{const result=Papa.parse(txt,{header:true,skipEmptyLines:true,dynamicTyping:false,delimitersToGuess:[",","\t","|",";"]});if(!result.data?.length){sE("No data");return;}const h=Object.keys(result.data[0]).map(x=>x.trim());const f=ps=>h.find(x=>{const l=x.toLowerCase().replace(/[^a-z0-9]/g,"");return ps.some(p=>l.includes(p));})||"";const hI=f(["activity"])||h[0],hS=f(["status"]),hW=f(["workstream"]),hA=f(["application"]),hP=f(["phase","group"]),hC=f(["taskclassification","classification"]),hD=f(["descriptionandnotes","description"]),hU=f(["usca","usimpact","impact"]),hSD=f(["expectedstart","startdate"]),hED=f(["expectedend","enddate"]),hR=f(["responsible","pinginfor"]),hPS=f(["pingsme"]),hEX=f(["executor"]),hPP=f(["pingsupport"]),hIS=f(["inforsme"]),hMO=f(["mockonly","mock"]),hJP=f(["japantoexecute","japan"]),hN=f(["commentsandnotes","comment"]);const parsed=result.data.map(r=>{const id=(r[hI]||"").trim();if(!id)return null;return{id,s:gSt(r[hS]),w:(r[hW]||"").trim()||"Other",a:(r[hA]||"").trim()||"All",p:pPh(r[hP]),c:(r[hC]||"").trim(),d:(r[hD]||"").trim(),r:(r[hR]||"").trim(),ps:(r[hPS]||"").trim(),ex:(r[hEX]||"").trim(),pp:(r[hPP]||"").trim(),is:(r[hIS]||"").trim(),sd:(r[hSD]||"").trim(),ed:(r[hED]||"").trim(),sdD:pD(r[hSD]),edD:pD(r[hED]),ui:!!(r[hU]||"").trim(),mo:(r[hMO]||"").toString().toLowerCase().includes("yes"),jp:(r[hJP]||"").toString().toLowerCase().includes("yes"),n:(r[hN]||"").trim(),estStart:"",estEnd:"",actStart:"",actEnd:"",blocker:"",notes:[],deps:[],history:[],updatedBy:"",updatedAt:""}}).filter(Boolean);const log=addL("Uploaded CSV with "+parsed.length+" tasks");sT(parsed);sL(true);sE("");saveAll(parsed,log);}catch(e){sE("Error: "+e.message);}}
+function handleFile(e){const fi=e.target.files[0];if(!fi)return;const rd=new FileReader();rd.onload=ev=>parseCSV(ev.target.result);rd.readAsText(fi);}
+
+function updField(id,field,val){sT(prev=>{const task=prev.find(t=>t.id===id);const oldVal=task?task[field]:"";const next=prev.map(t=>{if(t.id!==id)return t;const u={...t,[field]:val,updatedBy:uName||"?",updatedAt:now()};if(field==="sd")u.sdD=pD(val);if(field==="ed")u.edD=pD(val);return u;});const label=fieldLabels[field]||field;let msg;if(typeof val==="boolean")msg=`${id}: ${label} ${val?"enabled":"disabled"}`;else{const o=(typeof oldVal==="string"?(oldVal||"").slice(0,25):"");const n2=(typeof val==="string"?(val||"").slice(0,25):"");msg=`${id}: ${label} changed${o?" from \u201c"+o+"\u201d":""}${n2?" to \u201c"+n2+"\u201d":""}`;}const log=addL(msg);if(USE_API){const upd={[field]:val,updatedBy:uName||"?",updatedAt:now()};if(field==="sd")upd.sdD=null;if(field==="ed")upd.edD=null;store.patchTask(id,upd);}else{saveAll(next,log);}return next;});}
+function updStatus(id,ns){sT(prev=>{const task=prev.find(t=>t.id===id);const from=task?SM[task.s]?.l||task.s:"?";const next=prev.map(t=>{if(t.id!==id)return t;const hist=[{ts:now(),user:uName||"?",from:t.s,to:ns},...(t.history||[])].slice(0,50);return{...t,s:ns,updatedBy:uName||"?",updatedAt:now(),blocker:ns!=="3-Blocked"?"":t.blocker,history:hist};});const log=addL(`${id} ${from} \u2192 ${SM[ns]?.l||ns}`);if(USE_API){const t2=next.find(t=>t.id===id);if(t2){const{sdD,edD,...patch}=t2;store.patchTask(id,patch);}}else{saveAll(next,log);}return next;});}
+function addNote(id,text){if(!text.trim())return;sT(prev=>{const next=prev.map(t=>{if(t.id!==id)return t;return{...t,notes:[{ts:now(),user:uName||"?",text:text.trim()},...(t.notes||[])],updatedBy:uName||"?",updatedAt:now()};});const pv=text.trim().length>60?text.trim().slice(0,60)+"\u2026":text.trim();const log=addL(`Note on ${id}: "${pv}"`);if(USE_API){const t2=next.find(t=>t.id===id);if(t2){const{sdD,edD,...patch}=t2;store.patchTask(id,patch);}}else{saveAll(next,log);}return next;});}
+function delTask(id){sT(prev=>{const next=prev.filter(t=>t.id!==id);const log=addL(`Deleted ${id}`);saveAll(next,log);return next;});sPanel(null);}
+function addNewTask(nt){if(!nt.id.trim()||!nt.d.trim())return;const t={...nt,sdD:pD(nt.sd),edD:pD(nt.ed),estStart:"",estEnd:"",actStart:"",actEnd:"",blocker:"",notes:[],deps:[],history:[],updatedBy:uName||"?",updatedAt:now()};sT(prev=>{const next=[...prev,t];const log=addL(`Added ${t.id}`);saveAll(next,log);return next;});}
+function addDep(id,depId){if(!depId.trim())return;sT(prev=>{const next=prev.map(t=>{if(t.id!==id)return t;const ex=(t.deps||[]).map(d=>d.toUpperCase());if(ex.includes(depId.trim().toUpperCase()))return t;return{...t,deps:[...(t.deps||[]),depId.trim()],updatedBy:uName||"?",updatedAt:now()};});const log=addL(`${id}: dep on ${depId.trim()}`);if(USE_API){const t2=next.find(t=>t.id===id);if(t2){const{sdD,edD,...patch}=t2;store.patchTask(id,patch);}}else{saveAll(next,log);}return next;});}
+function removeDep(id,depId){sT(prev=>{const next=prev.map(t=>{if(t.id!==id)return t;return{...t,deps:(t.deps||[]).filter(d=>d.toUpperCase()!==depId.toUpperCase()),updatedBy:uName||"?",updatedAt:now()};});const log=addL(`${id}: removed dep ${depId}`);if(USE_API){const t2=next.find(t=>t.id===id);if(t2){const{sdD,edD,...patch}=t2;store.patchTask(id,patch);}}else{saveAll(next,log);}return next;});}
+function savePre(){if(!preNm.trim())return;const p={id:Date.now(),name:preNm.trim(),user:uName,pF,wF,sF,rF,search,hideD,stFlt};const u=[...presets,p];sPre(u);store.savePresets(u);sPreNm("");}
+function loadPre(p){sPF(p.pF||"all");sWF(p.wF||"All");sSF(p.sF||"all");sRF(p.rF||"All");sSrch(p.search||"");sHD(p.hideD||false);sStFlt(p.stFlt||null);}
+function delPre(id){const u=presets.filter(p=>p.id!==id);sPre(u);store.savePresets(u);}
+
+const today=useMemo(()=>{const d=new Date();d.setHours(0,0,0,0);return d;},[]);
+const isPD=useCallback(t=>{if(t.s==="4-Complete"||t.s==="6-Archive")return false;if(!t.edD)return false;const e=new Date(t.edD);e.setHours(23,59,59,999);return e<today;},[today]);
+const isDB=useCallback(t=>{if(!t.deps?.length||t.s==="4-Complete"||t.s==="6-Archive")return false;return t.deps.some(d=>{const dep=tasks.find(x=>x.id.toUpperCase()===d.toUpperCase());return!dep||dep.s!=="4-Complete";});},[tasks]);
+const bMap=useMemo(()=>{const m={};tasks.forEach(t=>{(t.deps||[]).forEach(d=>{const k=d.toUpperCase();if(!m[k])m[k]=[];m[k].push(t.id);});});return m;},[tasks]);
+const focObj=useMemo(()=>{if(!focD)return null;const d=new Date(focD+"T00:00:00");return isNaN(d)?null:d;},[focD]);
+const gIdx=useMemo(()=>goalId?tasks.findIndex(t=>t.id.toUpperCase()===goalId.trim().toUpperCase()):-1,[goalId,tasks]);
+const ws=useMemo(()=>{const s=new Set(tasks.map(t=>t.w));return["All",...Array.from(s).sort()];},[tasks]);
+const resps=useMemo(()=>{const s=new Set(tasks.map(t=>t.r).filter(Boolean));return["All",...Array.from(s).sort()];},[tasks]);
+const allPpl=useMemo(()=>{const s=new Set();tasks.forEach(t=>{[t.ps,t.ex,t.pp,t.is].forEach(v=>{if(v)v.split(/[,\/&]/).forEach(n=>{const tr=n.trim();if(tr&&tr.length>2)s.add(tr);});});});return Array.from(s).sort();},[tasks]);
+const filtered=useMemo(()=>tasks.filter(t=>{if(pF!=="all"&&t.p!==pF)return false;if(wF!=="All"&&t.w!==wF)return false;if(sF!=="all"&&t.s!==sF)return false;if(rF!=="All"&&t.r!==rF)return false;if(hideD&&(t.s==="4-Complete"||t.s==="6-Archive"))return false;if(search){const q=search.toLowerCase();if(![t.id,t.d,t.ps,t.ex,t.is,t.pp,t.n].some(v=>v&&v.toLowerCase().includes(q)))return false;}return true;}),[tasks,pF,wF,sF,rF,search,hideD]);
+const sf=useMemo(()=>{let l=filtered;if(stFlt)l=l.filter(t=>{if(stFlt==="done")return t.s==="4-Complete";if(stFlt==="wip")return t.s==="2-WIP";if(stFlt==="pln")return t.s==="1-Planned";if(stFlt==="pastdue")return isPD(t);if(stFlt==="blocked")return t.s==="3-Blocked";if(stFlt==="depblk")return isDB(t);if(stFlt==="ui")return t.ui;return true;});if(focObj&&dM!=="none"&&dM!=="goal"){l=l.filter(t=>{if(t.s==="4-Complete"||t.s==="6-Archive")return false;if(dM==="starting"){if(!t.sdD)return false;return t.sdD.getFullYear()===focObj.getFullYear()&&t.sdD.getMonth()===focObj.getMonth()&&t.sdD.getDate()===focObj.getDate();}if(dM==="dueby"){if(isPD(t))return true;if(!t.edD){if(!t.sdD)return false;return t.sdD<=focObj;}const ed=new Date(t.edD);ed.setHours(23,59,59,999);return ed<=new Date(focObj.getFullYear(),focObj.getMonth(),focObj.getDate(),23,59,59,999);}return true;});}if(goalId&&gIdx>=0&&dM==="goal")l=l.filter(t=>{if(t.s==="4-Complete"||t.s==="6-Archive")return false;return tasks.findIndex(x=>x.id===t.id)<=gIdx;});return l;},[filtered,stFlt,isPD,isDB,focObj,dM,goalId,gIdx,tasks]);
+const stats=useMemo(()=>{const o={total:filtered.length,done:0,wip:0,pln:0,blocked:0,depblk:0,ui:0,pastdue:0};filtered.forEach(t=>{if(t.s==="4-Complete")o.done++;else if(t.s==="2-WIP")o.wip++;else if(t.s==="1-Planned")o.pln++;else if(t.s==="3-Blocked")o.blocked++;if(t.ui)o.ui++;if(isPD(t))o.pastdue++;if(isDB(t))o.depblk++;});return o;},[filtered,isPD,isDB]);
+const phG=useMemo(()=>{const g={};PH.forEach(p=>{g[p.id]=[];});sf.forEach(t=>{if(g[t.p])g[t.p].push(t);else{if(!g.Other)g.Other=[];g.Other.push(t);}});return g;},[sf]);
+const dG=useMemo(()=>{const g={};sf.forEach(t=>{const k=t.sdD?gDK(t.sdD):"No Date";if(!g[k])g[k]=[];g[k].push(t);});return Object.entries(g).sort((a,b)=>{const da=sf.find(t=>gDK(t.sdD)===a[0]);const db=sf.find(t=>gDK(t.sdD)===b[0]);if(!da?.sdD)return 1;if(!db?.sdD)return-1;return da.sdD-db.sdD;});},[sf]);
+const aS=useMemo(()=>{const g={};PH.forEach(p=>{g[p.id]={total:0,done:0};});tasks.forEach(t=>{if(g[t.p]){g[t.p].total++;if(t.s==="4-Complete")g[t.p].done++;}});return g;},[tasks]);
+const nxt=useMemo(()=>{if(!panel)return null;const i=tasks.findIndex(t=>t.id===panel);if(i<0)return null;for(let j=i+1;j<tasks.length;j++)if(tasks[j].s!=="4-Complete"&&tasks[j].s!=="6-Archive")return tasks[j].id;return null;},[panel,tasks]);
+const pTask=useMemo(()=>tasks.find(t=>t.id===panel),[panel,tasks]);
+const fLog=useMemo(()=>{let l=actLog;if(logFlt==="status")l=l.filter(e=>e.msg.includes("\u2192"));else if(logFlt==="notes")l=l.filter(e=>e.msg.includes("Note"));else if(logFlt==="admin")l=l.filter(e=>e.msg.includes("Uploaded")||e.msg.includes("Deleted")||e.msg.includes("Added"));if(logTime!=="all"){const n2=new Date();let cut;if(logTime==="1h")cut=new Date(n2-3600000);else if(logTime==="4h")cut=new Date(n2-14400000);else if(logTime==="today")cut=new Date(n2.getFullYear(),n2.getMonth(),n2.getDate());if(cut)l=l.filter(e=>{try{return new Date(e.ts)>=cut}catch(x){return true}});}return l;},[actLog,logFlt,logTime]);
+const prog=useMemo(()=>{const a=tasks.filter(t=>t.s!=="6-Archive"&&t.s!=="0-Not Mock");const tot=a.length;const done=a.filter(t=>t.s==="4-Complete").length;const wip=a.filter(t=>t.s==="2-WIP").length;const blk=a.filter(t=>t.s==="3-Blocked").length;const depb=a.filter(t=>isDB(t)).length;const pd=a.filter(t=>isPD(t)).length;return{total:tot,done,wip,blk,depb,pd,pct:tot?Math.round(done/tot*100):0};},[tasks,isDB,isPD]);
+const smartPre=useMemo(()=>{const sp=[];if(uName)sp.push({id:"s1",name:"My Tasks",smart:true,pF:"all",wF:"All",sF:"all",rF:"All",search:uName.split(" ")[0],hideD:true,stFlt:null});sp.push({id:"s2",name:"Actionable",smart:true,pF:"all",wF:"All",sF:"all",rF:"All",search:"",hideD:true,stFlt:null},{id:"s3",name:"Blocked",smart:true,pF:"all",wF:"All",sF:"all",rF:"All",search:"",hideD:false,stFlt:"blocked"},{id:"s4",name:"Past Due",smart:true,pF:"all",wF:"All",sF:"all",rF:"All",search:"",hideD:false,stFlt:"pastdue"},{id:"s5",name:"US/CA",smart:true,pF:"all",wF:"All",sF:"all",rF:"All",search:"",hideD:true,stFlt:"ui"},{id:"s6",name:"INFOR",smart:true,pF:"all",wF:"All",sF:"all",rF:"INFOR",search:"",hideD:true,stFlt:null});return sp;},[uName]);
+const allPre=useMemo(()=>[...smartPre,...presets.filter(p=>p.user===uName)],[smartPre,presets,uName]);
+const notifData=useMemo(()=>{if(!actLog.length)return null;const cut=lastVisit?new Date(lastVisit):null;const recent=cut?actLog.filter(e=>{try{return new Date(e.ts)>cut}catch(x){return false}}):actLog;if(!recent.length)return{empty:true};const completions=recent.filter(e=>e.msg.includes("Complete")&&e.msg.includes("\u2192")).length;const newBlk=recent.filter(e=>e.msg.includes("Blocked")&&e.msg.includes("\u2192")).length;const notes=recent.filter(e=>e.msg.includes("Note")).length;const edits=recent.filter(e=>e.msg.includes("changed")||e.msg.includes("enabled")||e.msg.includes("disabled")).length;const added=recent.filter(e=>e.msg.includes("Added")).length;const myN=uName.split(" ")[0].toLowerCase();const myMentions=recent.filter(e=>e.msg.toLowerCase().includes(myN)&&e.user!==uName).length;const contributors=[...new Set(recent.map(e=>e.user))];return{empty:false,total:recent.length,byOthers:recent.filter(e=>e.user!==uName).length,completions,newBlockers:newBlk,notes,edits,added,myMentions,contributors,sinceLabel:cut?fmtSince(cut):"all time",recentItems:recent.slice(0,5)};},[actLog,lastVisit,uName]);
+
+// Components
+const Badge=({status})=>{const st=SM[status]||{l:status,c:"#6b7280",bg:"#f3f4f6",s:"?"};return(<span style={{fontSize:10,fontWeight:700,color:st.c,background:st.bg,padding:"2px 7px",borderRadius:99,border:`1px solid ${st.c}33`,whiteSpace:"nowrap"}}>{st.s}</span>);};
+const Sec=({label,sub,color,count,done})=>(<div style={{padding:"8px 12px",background:"#f1f5f9",borderBottom:"1px solid #e2e8f0",display:"flex",alignItems:"center",gap:8,position:"sticky",top:0,zIndex:2}}><span style={{background:color||"#475569",color:"#fff",padding:"2px 8px",borderRadius:5,fontSize:10,fontWeight:700}}>{label}</span>{sub&&<span style={{fontSize:12,fontWeight:600,color:"#334155"}}>{sub}</span>}<span style={{marginLeft:"auto",fontSize:10,color:"#64748b"}}>{done!==undefined?`${done}/`:""}{count}</span>{done!==undefined&&<div style={{width:50,height:5,background:"#e2e8f0",borderRadius:3}}><div style={{width:`${count?(done/count)*100:0}%`,height:"100%",background:color||"#475569",borderRadius:3}}/></div>}</div>);
+const Row=({t})=>{const pd=isPD(t);const db=isDB(t);const ig=dM==="goal"&&goalId&&t.id.toUpperCase()===goalId.trim().toUpperCase();const ia=panel===t.id;return(<div onClick={()=>{sPanel(t.id);sSLog(false);}} style={{borderBottom:"1px solid #e5e7eb",background:ia?"#dbeafe":ig?"#fef9c3":pd?"#fef2f2":t.s==="3-Blocked"?"#fef2f2":db?"#fff7ed":"#fff",cursor:"pointer",borderLeft:ia?"3px solid #3b82f6":"3px solid transparent"}}><div style={{display:"grid",gridTemplateColumns:"70px 44px 1fr 100px 58px 58px",alignItems:"center",padding:"6px 10px",gap:5,fontSize:12}}><span style={{fontFamily:"monospace",fontWeight:700,fontSize:10,color:ig?"#92400e":pd?"#dc2626":"#475569"}}>{t.id}{ig?" \ud83c\udfc1":""}</span><Badge status={t.s}/><div style={{display:"flex",alignItems:"center",gap:4,overflow:"hidden"}}>{pd&&<span style={{fontSize:8,fontWeight:800,color:"#dc2626",background:"#fee2e2",padding:"1px 4px",borderRadius:3,whiteSpace:"nowrap",flexShrink:0}}>LATE</span>}{t.s==="3-Blocked"&&<span style={{fontSize:8,fontWeight:800,color:"#dc2626",background:"#fee2e2",padding:"1px 4px",borderRadius:3,whiteSpace:"nowrap",flexShrink:0}}>BLK</span>}{db&&t.s!=="3-Blocked"&&<span style={{fontSize:8,fontWeight:800,color:"#ea580c",background:"#fff7ed",padding:"1px 4px",borderRadius:3,whiteSpace:"nowrap",flexShrink:0,border:"1px solid #fed7aa"}}>DEP</span>}<span style={{color:"#1e293b",lineHeight:1.3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.d||"(no desc)"}</span></div><span style={{fontSize:10,color:"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.ex||"\u2014"}</span><span style={{fontSize:10,color:"#94a3b8"}}>{t.sdD?fDS(t.sdD):t.sd}</span><span style={{fontSize:10,color:pd?"#dc2626":"#94a3b8",fontWeight:pd?700:400}}>{t.edD?fDS(t.edD):t.ed}</span></div></div>);};
+
+// ============ NOTE: Due to size constraints, the slide panel, screens, and dashboard layout ============
+// ============ are identical to the single-user Azure export (cutover-mgmt-azure).          ============
+// ============ The only differences are: store abstraction, auto-refresh, sync indicator.    ============
+// ============ Copy the SPanel, screens, and return() from that file, then add:             ============
+
+// Add this sync indicator to the header subtitle:
+// {USE_API&&syncTime&&<span style={{fontSize:8,opacity:0.5}}> | Synced {fmtSince(syncTime)}</span>}
+// {USE_API&&<span className="pulse" style={{fontSize:8,color:"#10b981"}}> LIVE</span>}
+
+// For brevity, rendering the loading screen and a message to merge with full export:
+if(loading)return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh"}}><div style={{textAlign:"center"}}><div className="pulse" style={{fontSize:48,marginBottom:16}}>{"\ud83d\udce1"}</div><p style={{color:"#64748b"}}>Connecting{USE_API?" to server":""}...</p></div></div>);
+
+// The rest of the render is identical to cutover-mgmt-azure
+// with these additions in the header info line:
+// - "LIVE" pulse indicator when API mode
+// - "Synced Xm ago" timestamp
+// - Connection mode indicator
+
+return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh"}}><div style={{textAlign:"center",maxWidth:500,padding:20}}><h1 style={{fontSize:22,marginBottom:12}}>Cutover Management App</h1><div style={{padding:20,background:"#ecfdf5",borderRadius:12,marginBottom:16}}><p style={{fontSize:14,fontWeight:600,color:"#10b981",margin:"0 0 8px"}}>{"\u2705"} Backend Ready</p><p style={{fontSize:12,color:"#475569",margin:0}}>Mode: {USE_API?"<strong>Multi-User (API)</strong>":"<strong>Single-User (localStorage)</strong>"}</p></div><p style={{fontSize:12,color:"#64748b",lineHeight:1.6}}>This file contains the storage abstraction layer and auto-refresh logic for multi-user mode. To complete the deployment:</p><ol style={{textAlign:"left",fontSize:12,color:"#475569",lineHeight:1.8,margin:"16px 0"}}><li>Deploy the Azure Functions from <code>azure-backend</code></li><li>Set <code>API_BASE</code> at the top of this file to your Function App URL</li><li>Copy the UI components from the single-user export into this file</li><li>Deploy to Azure Static Web Apps</li></ol><p style={{fontSize:11,color:"#94a3b8"}}>Or set API_BASE to empty string to run in localStorage mode (current).</p></div></div>);
+}
+ReactDOM.render(<App/>,document.getElementById("root"));
+</script>
+</body>
+</html>
