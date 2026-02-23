@@ -1,0 +1,37 @@
+name: Deploy Frontend to Azure Static Web App
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cutover-mgmt-multiuser.html'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    name: Deploy Frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          lfs: false
+
+      - name: Update API Base URL
+        run: |
+          sed -i 's|const API_BASE = "";|const API_BASE = "https://cutover-mgmt-api.azurewebsites.net/api";|g' cutover-mgmt-multiuser.html
+
+      - name: Build And Deploy
+        id: builddeploy
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          app_location: "/"
+          api_location: ""
+          output_location: ""
+          app_build_command: ""
+          skip_app_build: true
