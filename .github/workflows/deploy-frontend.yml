@@ -19,9 +19,12 @@ jobs:
           submodules: true
           lfs: false
 
-      - name: Update API Base URL
+      - name: Prepare deployment files
         run: |
+          # Update API Base URL
           sed -i 's|const API_BASE = "";|const API_BASE = "https://cutover-mgmt-api.azurewebsites.net/api";|g' cutover-mgmt-multiuser.html
+          # Copy to index.html for Static Web App
+          cp cutover-mgmt-multiuser.html index.html
 
       - name: Build And Deploy
         id: builddeploy
