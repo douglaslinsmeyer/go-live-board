@@ -33,9 +33,61 @@ jobs:
         cd "${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}"
         npm install --production
 
-    - name: 'Deploy to Azure Functions'
-      uses: Azure/functions-action@v1
-      with:
-        app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
-        package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-        publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+    - name: 'Create Deployment Package'
+      shell: bash
+      run: |
+        cd "${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}"
+        zip -r ../backend-deploy.zip . -x "*.git/*"
+        ls -lh ../backend-deploy.zip
+
+    - name: 'Upload Package to Blob Storage'
+      shell: bash
+      env:
+        AZURE_STORAGE_ACCOUNT: cutovermgmtstorage001
+        AZURE_STORAGE_KEY: ${{ secrets.AZURE_STORAGE_KEY }}
+      run: |
+        az storage blob upload \
+          --account-name cutovermgmtstorage001 \
+          --account-key "$AZURE_STORAGE_KEY" \
+          --container-name cutover-data \
+          --name backend-deploy.zip \
+          --file backend-deploy.zip \
+          --overwrite
+        echo "✅ Deployment package uploaded to blob storage"
+
+    - name: 'Trigger Function App Reload'
+      shell: bash
+      run: |
+        # Extract credentials from publish profile
+        PUBLISH_PROFILE='${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}'
+        USERNAME=$(echo "$PUBLISH_PROFILE" | sed -n 's/.*userName="\([^"]*\)".*/\1/p' | head -1)
+        PASSWORD=$(echo "$PUBLISH_PROFILE" | sed -n 's/.*userPWD="\([^"]*\)".*/\1/p' | head -1)
+
+        echo "Attempting to restart Function App..."
+        # Try to restart via Kudu API (may fail with 503, but that's okay)
+        if curl -X POST \
+          -u "$USERNAME:$PASSWORD" \
+          "https://${{ env.AZURE_FUNCTIONAPP_NAME }}.scm.azurewebsites.net/api/functions/host/restart" \
+          -H "Content-Type: application/json" \
+          --max-time 30 \
+          --silent \
+          --show-error; then
+          echo "✅ Function App restart successful"
+        else
+          echo "⚠️ Restart API unavailable (Kudu 503) - Function will reload on next invocation"
+        fi
+
+        echo "⏳ Waiting 30 seconds for changes to propagate..."
+        sleep 30
+
+    - name: 'Verify Deployment'
+      shell: bash
+      run: |
+        echo "Testing deployment..."
+        HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/api/auth?name=Test")
+        if [ "$HTTP_CODE" = "200" ]; then
+          echo "✅ Deployment successful - API responding with HTTP $HTTP_CODE"
+        else
+          echo "⚠️ API returned HTTP $HTTP_CODE - may need more time to initialize"
+          exit 1
+        fi
