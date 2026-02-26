@@ -33,27 +33,9 @@ jobs:
         cd "${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}"
         npm install --production
 
-    - name: 'Create deployment package'
-      shell: bash
-      run: |
-        cd "${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}"
-        zip -r ../backend-deploy.zip . -x "*.git/*"
-
-    - name: 'Deploy via Kudu API'
-      shell: bash
-      run: |
-        # Extract credentials from publish profile
-        PUBLISH_PROFILE='${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}'
-        USERNAME=$(echo "$PUBLISH_PROFILE" | sed -n 's/.*userName="\([^"]*\)".*/\1/p' | head -1)
-        PASSWORD=$(echo "$PUBLISH_PROFILE" | sed -n 's/.*userPWD="\([^"]*\)".*/\1/p' | head -1)
-
-        # Deploy using Kudu zip deploy API (bypasses validation)
-        curl -X POST \
-          -u "$USERNAME:$PASSWORD" \
-          -H "Content-Type: application/zip" \
-          --data-binary @backend-deploy.zip \
-          --fail \
-          --max-time 300 \
-          "https://${{ env.AZURE_FUNCTIONAPP_NAME }}.scm.azurewebsites.net/api/zipdeploy?isAsync=false"
-
-        echo "Deployment completed successfully"
+    - name: 'Deploy to Azure Functions'
+      uses: Azure/functions-action@v1
+      with:
+        app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
+        package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+        publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
