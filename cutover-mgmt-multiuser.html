@@ -203,8 +203,9 @@ function App(){
     sUN("");sUR("user");sPanel(null);setSE(false);sSAP(false);sNI("");sAPI("");sPE("");
   }
 
-  // Load on mount
+  // Load on mount (only after authentication)
   useEffect(()=>{
+    if(!uName)return;
     async function loadAll(){
       const t=await store.getTasks();
       if(t?.length){t.forEach(x=>{x.sdD=pD(x.sd);x.edD=pD(x.ed);if(!x.notes)x.notes=[];if(!x.deps)x.deps=[];if(!x.history)x.history=[];});sT(t);sL(true);}
@@ -213,7 +214,7 @@ function App(){
       sLS(new Date());
     }
     loadAll();
-  },[]);
+  },[uName]);
 
   // Auto-refresh every 30s in API mode
   useEffect(()=>{
@@ -486,7 +487,7 @@ function App(){
       <div style={{fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif",maxWidth:600,margin:"60px auto",textAlign:"center",padding:"0 16px"}}>
         <div style={{background:"linear-gradient(135deg,#1e293b,#334155)",color:"#fff",padding:24,borderRadius:"12px 12px 0 0"}}>
           <h1 style={{margin:0,fontSize:20}}>Cutover Management App</h1>
-          <p style={{margin:"4px 0 0",opacity:0.7,fontSize:12}}>PING Project Evo • {uName} (Admin) ⭐</p>
+          <p style={{margin:"4px 0 0",opacity:0.7,fontSize:12}}>PING Project Evo • {uName} (Admin)</p>
         </div>
         <div style={{padding:40,background:"#fff",border:"1px solid #e2e8f0",borderTop:0,borderRadius:"0 0 12px 12px"}}>
           <div style={{fontSize:48,marginBottom:16}}>📡</div>
@@ -733,25 +734,25 @@ function App(){
     const pd=isPD(t);const depBlk=isDepBlocked(t);
     const bg=t.id===panel?"#eff6ff":pd?"#fff5f5":depBlk?"#fff7ed":"#fff";
     return(
-      <div onClick={()=>sPanel(t.id===panel?null:t.id)} style={{display:"grid",gridTemplateColumns:"70px 44px 1fr 100px 58px 58px",padding:"5px 10px",borderBottom:"1px solid #f1f5f9",cursor:"pointer",background:bg,gap:5,alignItems:"center"}}>
-        <div style={{fontFamily:"monospace",fontSize:9,fontWeight:700,color:"#475569",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.id}</div>
-        <div style={{padding:"2px 4px",background:st.bg,color:st.c,borderRadius:3,fontSize:8,fontWeight:700,textAlign:"center"}}>{st.s}</div>
-        <div style={{fontSize:10,color:"#334155",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.d}</div>
-        <div style={{fontSize:9,color:"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.ex||"—"}</div>
-        <div style={{fontSize:9,color:"#64748b",whiteSpace:"nowrap"}}>{t.sdD?fDS(t.sdD):"—"}</div>
-        <div style={{fontSize:9,color:pd?"#dc2626":"#64748b",whiteSpace:"nowrap",fontWeight:pd?700:400}}>{t.edD?fDS(t.edD):"—"}</div>
+      <div onClick={()=>sPanel(t.id===panel?null:t.id)} style={{display:"grid",gridTemplateColumns:"90px 52px 1fr 120px 68px 68px",padding:"6px 12px",borderBottom:"1px solid #f1f5f9",cursor:"pointer",background:bg,gap:6,alignItems:"center"}}>
+        <div style={{fontFamily:"monospace",fontSize:11,fontWeight:700,color:"#475569",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.id}</div>
+        <div style={{padding:"2px 5px",background:st.bg,color:st.c,borderRadius:3,fontSize:10,fontWeight:700,textAlign:"center"}}>{st.s}</div>
+        <div style={{fontSize:11,color:"#334155",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.d}</div>
+        <div style={{fontSize:10,color:"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.ex||"—"}</div>
+        <div style={{fontSize:10,color:"#64748b",whiteSpace:"nowrap"}}>{t.sdD?fDS(t.sdD):"—"}</div>
+        <div style={{fontSize:10,color:pd?"#dc2626":"#64748b",whiteSpace:"nowrap",fontWeight:pd?700:400}}>{t.edD?fDS(t.edD):"—"}</div>
       </div>
     );
   }
 
   function Sec({label,sub,color,count,done}){
     return(
-      <div style={{padding:"6px 10px",background:"#f8fafc",borderBottom:"1px solid #e2e8f0",display:"flex",alignItems:"center",gap:8,position:"sticky",top:0,zIndex:2}}>
-        <span style={{background:color,color:"#fff",padding:"2px 8px",borderRadius:5,fontSize:11,fontWeight:700}}>{label}</span>
-        {sub&&<span style={{fontSize:10,color:"#475569",fontWeight:500}}>{sub}</span>}
-        <span style={{marginLeft:"auto",fontSize:10,color:"#64748b"}}>{done}/{count}</span>
-        <div style={{width:40,height:4,background:"#e2e8f0",borderRadius:2,overflow:"hidden"}}>
-          <div style={{width:`${count?Math.round((done/count)*100):0}%`,height:"100%",background:color,borderRadius:2}}/>
+      <div style={{padding:"7px 12px",background:"#f8fafc",borderBottom:"1px solid #e2e8f0",display:"flex",alignItems:"center",gap:8,position:"sticky",top:0,zIndex:2}}>
+        <span style={{background:color,color:"#fff",padding:"2px 10px",borderRadius:5,fontSize:12,fontWeight:700}}>{label}</span>
+        {sub&&<span style={{fontSize:11,color:"#475569",fontWeight:500}}>{sub}</span>}
+        <span style={{marginLeft:"auto",fontSize:11,color:"#64748b"}}>{done}/{count}</span>
+        <div style={{width:48,height:5,background:"#e2e8f0",borderRadius:2,overflow:"hidden"}}>
+          <div style={{width:(count?Math.round((done/count)*100):0)+"%",height:"100%",background:color,borderRadius:2}}/>
         </div>
       </div>
     );
@@ -770,7 +771,7 @@ function App(){
         <div style={{background:"linear-gradient(135deg,#1e293b,#334155)",color:"#fff",padding:"8px 12px",flexShrink:0}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
             <div>
-              <h1 style={{margin:0,fontSize:14,fontWeight:700}}>Cutover Management App</h1>
+              <h1 style={{margin:0,fontSize:15,fontWeight:700}}>Cutover Management App</h1>
               <p style={{margin:0,fontSize:9,opacity:0.6}}>{tasks.length} tasks • {uName}{saving?" • Saving…":""}{USE_API&&lastSync?" • Synced "+Math.round((new Date()-lastSync)/60000)+"m ago":""}</p>
             </div>
             <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
@@ -792,46 +793,55 @@ function App(){
             ))}
           </div>
         </div>
-        {/* Phase bar */}
-        <div style={{display:"flex",gap:2,padding:"4px 8px",background:"#1e293b",flexShrink:0,flexWrap:"wrap"}}>
-          <button onClick={()=>sPF("all")} style={{padding:"2px 8px",fontSize:9,fontWeight:700,border:"none",borderRadius:3,cursor:"pointer",background:pF==="all"?"#fff":"rgba(255,255,255,0.15)",color:pF==="all"?"#1e293b":"rgba(255,255,255,0.8)"}}>ALL</button>
+        {/* Phase Bar */}
+        <div style={{display:"flex",background:"#0f172a",borderBottom:"2px solid #1e293b",flexShrink:0}}>
+          <button onClick={()=>sPF("all")} style={{flex:1,padding:"16px 4px",border:"none",borderBottom:pF==="all"?"3px solid #fff":"3px solid transparent",cursor:"pointer",background:"transparent",color:pF==="all"?"#fff":"#475569",fontSize:16,fontWeight:700,textAlign:"center"}}>ALL</button>
           {PH.map(p=>{
             const cnt=tasks.filter(t=>t.p===p.id).length;
             const dn=tasks.filter(t=>t.p===p.id&&isDone(t)).length;
+            const active=pF===p.id;
             return(
-              <button key={p.id} onClick={()=>sPF(pF===p.id?"all":p.id)} style={{padding:"2px 8px",fontSize:9,fontWeight:700,border:"none",borderRadius:3,cursor:"pointer",display:"flex",alignItems:"center",gap:4,background:pF===p.id?p.cl:"rgba(255,255,255,0.1)",color:pF===p.id?"#fff":"rgba(255,255,255,0.7)"}}>
-                <span style={{background:pF===p.id?"rgba(255,255,255,0.25)":p.cl,color:"#fff",borderRadius:2,padding:"0 3px",fontSize:8}}>{p.l}</span>
-                <span>{cnt>0?`${dn}/${cnt}`:""}</span>
+              <button key={p.id} onClick={()=>sPF(active?"all":p.id)} style={{flex:1,padding:"16px 4px",border:"none",borderBottom:active?"3px solid "+p.cl:"3px solid transparent",cursor:"pointer",background:"transparent",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3}}>
+                <span style={{fontSize:18,fontWeight:800,color:active?p.cl:"#64748b",letterSpacing:"0.02em"}}>{p.l}</span>
+                {cnt>0&&<span style={{fontSize:13,fontWeight:500,color:active?"#cbd5e1":"#475569"}}>{dn}/{cnt}</span>}
               </button>
             );
           })}
-          {pF!=="all"&&(
-            <button onClick={()=>sHD(!hideD)} style={{marginLeft:4,padding:"2px 8px",fontSize:9,fontWeight:700,borderRadius:3,cursor:"pointer",display:"flex",alignItems:"center",gap:3,border:"1px solid "+(hideD?"#10b981":"rgba(255,255,255,0.3)"),background:hideD?"#10b981":"rgba(255,255,255,0.08)",color:hideD?"#fff":"rgba(255,255,255,0.7)"}}>
-              {hideD?"✓ Hiding Done":"Hide Done"}
-            </button>
-          )}
+          {pF!=="all"&&<button onClick={()=>sHD(!hideD)} style={{padding:"16px 14px",border:"none",borderBottom:"3px solid transparent",cursor:"pointer",background:hideD?"rgba(16,185,129,0.12)":"transparent",color:hideD?"#10b981":"#475569",fontSize:13,fontWeight:700,whiteSpace:"nowrap"}}>{hideD?"Hiding Done":"Hide Done"}</button>}
         </div>
-        {/* Progress bar */}
+        {/* Progress Band */}
         {tasks.length>0&&(
-          <div style={{padding:"3px 8px",background:"#0f172a",flexShrink:0,display:"flex",alignItems:"center",gap:8}}>
-            <div style={{flex:1,height:6,background:"#334155",borderRadius:3,overflow:"hidden",display:"flex"}}>
-              <div style={{width:`${(totDone/tasks.length)*100}%`,background:"#10b981",height:"100%"}}/>
-              <div style={{width:`${(totWip/tasks.length)*100}%`,background:"#f59e0b",height:"100%"}}/>
-              <div style={{width:`${(totBlk/tasks.length)*100}%`,background:"#dc2626",height:"100%"}}/>
+          <div style={{background:"#0f172a",padding:"10px 16px 8px",flexShrink:0}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
+              <span style={{fontSize:11,fontWeight:700,color:"#475569",letterSpacing:"0.08em"}}>OVERALL PROGRESS</span>
+              <span style={{fontSize:20,fontWeight:800,color:"#f1f5f9"}}>{pct}% <span style={{fontSize:13,fontWeight:400,color:"#64748b"}}>({totDone}/{tasks.length})</span></span>
             </div>
-            <span style={{fontSize:9,color:"#94a3b8",whiteSpace:"nowrap"}}>{pct}% complete • {totDone}/{tasks.length} done • {totWip} WIP • {totBlk} blocked</span>
+            <div style={{height:12,background:"#1e293b",borderRadius:6,overflow:"hidden",display:"flex",marginBottom:7}}>
+              <div style={{width:(totDone/tasks.length*100)+"%",background:"#10b981",height:"100%",transition:"width 0.4s"}}/>
+              <div style={{width:(totWip/tasks.length*100)+"%",background:"#f59e0b",height:"100%"}}/>
+              <div style={{width:(totBlk/tasks.length*100)+"%",background:"#dc2626",height:"100%"}}/>
+            </div>
+            <div style={{display:"flex",gap:16,alignItems:"center"}}>
+              {[["#10b981","Done"],["#f59e0b","WIP"],["#dc2626","Blocked"]].map(item=>(
+                <span key={item[1]} style={{fontSize:12,color:"#94a3b8",display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{width:9,height:9,borderRadius:"50%",background:item[0],display:"inline-block",flexShrink:0}}/>
+                  {item[1]}
+                </span>
+              ))}
+              {stats.pastdue>0&&<span style={{fontSize:12,fontWeight:700,color:"#f59e0b"}}>{stats.pastdue} past due</span>}
+            </div>
           </div>
         )}
         {/* Help */}
         {showHelp&&(
-          <div style={{padding:"8px 10px",background:"#f0f9ff",borderBottom:"2px solid #3b82f6",fontSize:10,lineHeight:1.5,flexShrink:0}}>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"4px 16px"}}>
-              <div><strong style={{color:"#3b82f6"}}>Click a task</strong> to open side panel. Change status, add notes, flag blockers.</div>
-              <div><strong style={{color:"#f59e0b"}}>Day Focus</strong> — pick date + mode for daily execution view.</div>
-              <div><strong style={{color:"#10b981"}}>Auto-advance</strong> — completing a task opens the next one.</div>
-              <div><strong style={{color:"#dc2626"}}>Blocked</strong> — set Blocked status, add reason in panel.</div>
-              <div><strong style={{color:"#3b82f6"}}>Presets</strong> — save your filter combo for quick re-use.</div>
-              <div><strong style={{color:"#475569"}}>All changes auto-save.</strong> Export CSV for bulk edits.</div>
+          <div style={{padding:"12px 16px",background:"#f0f9ff",borderBottom:"2px solid #3b82f6",flexShrink:0,fontSize:11,color:"#1e293b",lineHeight:1.6}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"10px 24px"}}>
+              <div><div style={{fontWeight:700,color:"#3b82f6",marginBottom:3}}>Phase Bar</div><p style={{margin:"2px 0"}}>Click any phase (BL, P0-P5) to filter. Click again to clear. When a phase is active, Hide Done appears to show only incomplete tasks.</p></div>
+              <div><div style={{fontWeight:700,color:"#f59e0b",marginBottom:3}}>Day Focus (Yellow Bar)</div><p style={{margin:"2px 0"}}><strong>Starting</strong> - tasks starting on the selected date.</p><p style={{margin:"2px 0"}}><strong>Due EOD</strong> - tasks due by end of day, including past due.</p><p style={{margin:"2px 0"}}><strong>Goal ID</strong> - show all tasks up to a target task ID.</p></div>
+              <div><div style={{fontWeight:700,color:"#10b981",marginBottom:3}}>Stat Cards</div><p style={{margin:"2px 0"}}>Click any card to filter: Plan, WIP, Done, Blocked, Dep, Late, US/CA. Click again to clear. Done includes Complete and Not Mock.</p></div>
+              <div><div style={{fontWeight:700,color:"#334155",marginBottom:3}}>Task Rows</div><p style={{margin:"2px 0"}}>Click any row to open the side panel: update status, add notes, log times, manage dependencies. Completing a task auto-advances to the next.</p></div>
+              <div><div style={{fontWeight:700,color:"#6366f1",marginBottom:3}}>Standup Summary</div><p style={{margin:"2px 0"}}>Set Day Focus to Due EOD then click Standup Summary in the header to generate an AI briefing of the current task view for your daily standup.</p></div>
+              <div><div style={{fontWeight:700,color:"#475569",marginBottom:3}}>Admin Controls</div><p style={{margin:"2px 0"}}><strong>Re-upload</strong> replaces the plan. <strong>Export CSV</strong> downloads all data. <strong>+ Add / Delete</strong> manages tasks.</p></div>
             </div>
           </div>
         )}
@@ -851,7 +861,7 @@ function App(){
           <select value={rF} onChange={e=>sRF(e.target.value)} style={{fontSize:10,padding:"2px 4px",border:"1px solid #d1d5db",borderRadius:4,color:"#1e293b"}}>
             {resps.map(r=>(<option key={r} value={r}>{r}</option>))}
           </select>
-          <input value={search} onChange={e=>sSrch(e.target.value)} placeholder="Search…" style={{fontSize:10,padding:"2px 6px",border:"1px solid #d1d5db",borderRadius:4,width:120,color:"#1e293b"}}/>
+          <input value={search} onChange={e=>sSrch(e.target.value)} placeholder="Search" style={{fontSize:10,padding:"2px 6px",border:"1px solid #d1d5db",borderRadius:4,width:130,color:"#1e293b"}}/>
           <label style={{fontSize:9,color:"#475569",display:"flex",alignItems:"center",gap:2}}><input type="checkbox" checked={hideD} onChange={e=>sHD(e.target.checked)}/> Hide Done</label>
           <div style={{position:"relative"}}>
             <button onClick={()=>sSPre(!showPre)} style={{fontSize:9,padding:"2px 6px",background:"#f1f5f9",border:"1px solid #d1d5db",borderRadius:4,cursor:"pointer",color:"#475569"}}>Presets ▾</button>
@@ -896,10 +906,10 @@ function App(){
           </div>
           {dM==="goal"&&<input value={goalId} onChange={e=>sGI(e.target.value)} placeholder="Task ID" list="tids" style={{fontSize:10,padding:"2px 4px",borderRadius:3,border:"1px solid #d97706",width:80,fontFamily:"monospace",color:"#1e293b"}}/>}
           <datalist id="tids">{tasks.slice(0,500).map(t=>(<option key={t.id} value={t.id}/>))}</datalist>
-          {(dM!=="none"||focD)&&<button onClick={()=>{sDM("none");sFocD("");sGI("");}} style={{padding:"1px 4px",fontSize:8,background:"#fee2e2",color:"#dc2626",border:"none",borderRadius:2,cursor:"pointer",fontWeight:700}}>✕</button>}
+          {(dM!=="none"||focD)&&<button onClick={()=>{sDM("none");sFocD("");sGI("");}} style={{padding:"3px 8px",fontSize:10,background:"#fee2e2",color:"#dc2626",border:"1px solid #fca5a5",borderRadius:4,cursor:"pointer",fontWeight:700}}>Clear</button>}
         </div>
-        {/* Col headers */}
-        <div style={{display:"grid",gridTemplateColumns:"70px 44px 1fr 100px 58px 58px",padding:"3px 10px",background:"#f1f5f9",borderBottom:"1px solid #e2e8f0",fontSize:8,fontWeight:700,color:"#64748b",gap:5,flexShrink:0}}>
+        {/* Col Headers */}
+        <div style={{display:"grid",gridTemplateColumns:"90px 52px 1fr 120px 68px 68px",padding:"4px 12px",background:"#f1f5f9",borderBottom:"1px solid #e2e8f0",fontSize:10,fontWeight:700,color:"#64748b",gap:6,flexShrink:0}}>
           <span>ID</span><span>Status</span><span>Description</span><span>Executor</span><span>Start</span><span>End</span>
         </div>
         {/* Task list */}
