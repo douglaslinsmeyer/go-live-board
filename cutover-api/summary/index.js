@@ -30,18 +30,29 @@ module.exports = async function (context, req) {
     }
 
     // Prepare task summary for AI
-    const taskSummary = tasks.map(t => ({
-      id: t.id,
-      status: t.status,
-      description: t.description || "",
-      phase: t.phase || "",
-      workstream: t.workstream || "",
-      executor: t.executor || "",
-      blocker: t.blocker || "",
-      startDate: t.startDate || "",
-      endDate: t.endDate || "",
-      dependencies: (t.dependencies || []).length > 0 ? t.dependencies.join(", ") : "none"
-    }));
+    const taskSummary = tasks.map(t => {
+      let deps = "none";
+      if (t.dependencies) {
+        if (Array.isArray(t.dependencies)) {
+          deps = t.dependencies.length > 0 ? t.dependencies.join(", ") : "none";
+        } else if (typeof t.dependencies === 'string') {
+          deps = t.dependencies || "none";
+        }
+      }
+
+      return {
+        id: t.id,
+        status: t.status,
+        description: t.description || "",
+        phase: t.phase || "",
+        workstream: t.workstream || "",
+        executor: t.executor || "",
+        blocker: t.blocker || "",
+        startDate: t.startDate || "",
+        endDate: t.endDate || "",
+        dependencies: deps
+      };
+    });
 
     // Build context description
     let contextDesc = "";
@@ -61,19 +72,46 @@ module.exports = async function (context, req) {
     // Call Anthropic API
     const anthropic = new Anthropic({ apiKey });
 
-    const prompt = `You are a project manager creating a concise standup summary for an M3 ERP cutover migration.
+    const prompt = `You are a project manager creating a concise standup briefing for an M3 ERP cutover migration.
 
 ${contextDesc ? `Context:\n${contextDesc}\n` : ""}
 Tasks (${tasks.length} total):
 ${JSON.stringify(taskSummary, null, 2)}
 
-Generate a brief standup summary (3-5 sentences) covering:
-1. Overall progress (how many tasks completed, in progress, blocked)
-2. Key blockers or risks (if any)
-3. Notable upcoming tasks or dependencies
-4. Any critical actions needed
+Generate a standup briefing in the following EXACT format:
 
-Keep it concise and actionable for a daily standup meeting.`;
+**Header:** One line with format: \`{focusDate} | {taskCount} tasks in view | Focus: {focusMode}\`
+
+Then organize tasks into these sections (use ## markdown headers):
+
+## BLOCKERS
+- List any tasks with status "3-Blocked"
+- Format each as: \`{ID}: {description} | {executor} | {phase} | Due {endDate} | BLOCKER: {blocker}\`
+- If none, write: "None"
+
+## IN PROGRESS
+- List any tasks with status "2-WIP"
+- Format each as: \`{ID}: {description} | {executor} | {phase} | Due {endDate}\`
+- If none, write: "None"
+
+## DUE TODAY
+- List any tasks with status "1-Planned" where endDate ≤ focusDate
+- Format each as: \`{ID}: {description} | {executor} | {phase} | Due {endDate}\`
+- If none, write: "None"
+
+## WATCH ITEMS
+- List any tasks that have pending dependencies (dependencies field not empty and not "none")
+- Format each as: \`{ID}: {description} | {executor} | {phase} | DEPENDS ON: {dependencies}\`
+- If none, write: "None"
+
+**Closing:** One sentence summarizing overall readiness for the day.
+
+IMPORTANT RULES:
+- Keep each bullet to ONE LINE
+- Use task IDs prominently
+- Be direct and action-oriented
+- NO filler language
+- If a field is empty, use "Unassigned" for executor, "N/A" for phase/date`;
 
     const message = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
