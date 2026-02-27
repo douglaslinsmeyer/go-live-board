@@ -56,6 +56,8 @@ const TS_M=[{id:"both",l:"Est+Act"},{id:"est",l:"Est"},{id:"act",l:"Act"}];
 const VM=[{id:"phase",l:"Phase"},{id:"day",l:"Day"},{id:"flat",l:"Flat"}];
 const ADMIN_NAMES=["Brad Amundson","Lewis Rogal"];
 const ADMIN_PASS="PingEvo2026";
+const SESSION_TIMEOUT_MS=4*60*60*1000;
+const SESSION_KEY="cma-session";
 const fieldLabels={d:"Description",w:"Workstream",a:"Application",p:"Phase",r:"Responsible",ps:"PING SME",ex:"Executor",pp:"PING Support",is:"Infor SME",sd:"Start Date",ed:"End Date",ui:"US/CA Impact",mo:"Mock Only",jp:"JP Execute",blocker:"Blocker",estStart:"Est Start",estEnd:"Est End",actStart:"Act Start",actEnd:"Act End"};
 
 // ============================================================
@@ -90,6 +92,16 @@ const store={
     try{const v=localStorage.getItem("cma-presets");return v?JSON.parse(v):[];}catch(e){return[];}
   },
   async savePresets(p){try{localStorage.setItem("cma-presets",JSON.stringify(p));}catch(e){}},
+  async generateSummary(tasks,ctx){
+    if(USE_API){
+      try{
+        const r=await fetch(API_BASE+"/summary",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+authToken},body:JSON.stringify({tasks,context:ctx})});
+        const d=await r.json();
+        return d.ok?d.summary:("Error: "+d.error);
+      }catch(e){return"Error connecting to summary service: "+e.message;}
+    }
+    return"AI summaries require the Azure backend to be configured. Set API_BASE in the app config.";
+  }
 };
 
 // ============================================================
@@ -163,12 +175,33 @@ function App(){
   const[nameIn,sNI]=useState("");
   const[adminPIn,sAPI]=useState("");
   const[showAP,sSAP]=useState(false);
-  const[passErr,sPE]=useState(false);
+  const[passErr,sPE]=useState("");
+  const[sessionExpired,setSE]=useState(false);
   const[addM,sAM]=useState(false);
   const[nT,sNT]=useState({id:"",s:"1-Planned",w:"",a:"All",p:"Phase 1",c:"",d:"",r:"PING",ps:"",ex:"",pp:"",is:"",sd:"",ed:""});
+  const[showSummary,setSS]=useState(false);
+  const[summaryText,setST]=useState("");
+  const[summaryLoading,setSL]=useState(false);
   const[lastSync,sLS]=useState(null);
   const isAdmin=uRole==="admin";
   const autoRefRef=useRef(null);
+
+  // ── Session ──
+  useEffect(()=>{
+    try{
+      const raw=localStorage.getItem(SESSION_KEY);
+      if(raw){const s=JSON.parse(raw);if(Date.now()-s.ts<SESSION_TIMEOUT_MS){sUN(s.name);sUR(s.role);setAuthToken(s.name,s.role,"");}else{localStorage.removeItem(SESSION_KEY);setSE(true);}}
+    }catch(e){}
+  },[]);
+
+  function persistSession(name,role){
+    try{localStorage.setItem(SESSION_KEY,JSON.stringify({name,role,ts:Date.now()}));}catch(e){}
+    setAuthToken(name,role,"");
+  }
+  function clearSession(){
+    try{localStorage.removeItem(SESSION_KEY);}catch(e){}
+    sUN("");sUR("user");sPanel(null);setSE(false);sSAP(false);sNI("");sAPI("");sPE("");
+  }
 
   // Load on mount
   useEffect(()=>{
@@ -196,6 +229,7 @@ function App(){
 
   async function saveAll(t,log){
     sSav(true);
+    try{const raw=localStorage.getItem(SESSION_KEY);if(raw){const s=JSON.parse(raw);localStorage.setItem(SESSION_KEY,JSON.stringify({...s,ts:Date.now()}));}}catch(e){}
     const ser=t.map(({sdD,edD,...r})=>r);
     await store.saveTasks(ser);
     if(!USE_API&&log)await store.saveLog(log);
@@ -317,6 +351,19 @@ function App(){
   function loadPre(p){sPF(p.pF||"all");sWF(p.wF||"All");sSF(p.sF||"all");sRF(p.rF||"All");sSrch(p.search||"");sHD(p.hideD||false);sStFlt(p.stFlt||null);}
   function delPre(id){const u=presets.filter(p=>p.id!==id);sPre(u);store.savePresets(u);}
 
+  // ── AI Standup Summary ──
+  async function handleGenerateSummary(){
+    setSL(true);setST("");setSS(true);
+    const taskData=sf.map(t=>({id:t.id,description:t.d,status:t.s,executor:t.ex||"",workstream:t.w,phase:t.p,startDate:t.sd,endDate:t.ed,blocker:t.blocker||"",dependencies:t.deps||[]}));
+    const ctx={focusDate:focD,focusMode:dM,phaseFilter:pF,generatedBy:uName,generatedAt:now()};
+    const result=await store.generateSummary(taskData,ctx);
+    setST(result);setSL(false);
+  }
+
+  function copyToClipboard(){
+    try{navigator.clipboard.writeText(summaryText);}catch(e){const ta=document.createElement("textarea");ta.value=summaryText;document.body.appendChild(ta);ta.select();document.execCommand("copy");document.body.removeChild(ta);}
+  }
+
   const today=useMemo(()=>{const d=new Date();d.setHours(0,0,0,0);return d;},[]);
   const isPD=useCallback(t=>{if(isDone(t))return false;if(!t.edD)return false;const e=new Date(t.edD);e.setHours(23,59,59,999);return e<today;},[today]);
   const focObj=useMemo(()=>{if(!focD)return null;const d=new Date(focD+"T00:00:00");return isNaN(d)?null:d;},[focD]);
@@ -385,6 +432,22 @@ function App(){
   // ---- SIGN IN ----
   if(!uName){
     const known=["Brad Amundson","Lewis Rogal","Derek Harris","Tom Kabler","Darren Sullivan","Jeff Knode","Morgan Boushka","Kelly Von Hoene","Chakra Dhandapani"];
+    function handleContinue(){
+      const name=nameIn.trim();if(!name)return;
+      if(ADMIN_NAMES.some(n=>n.toLowerCase()===name.toLowerCase()))sSAP(true);
+      else{persistSession(name,"user");sUN(name);sUR("user");}
+    }
+    function handleAdminLogin(){
+      const name=nameIn.trim();
+      if(USE_API){
+        fetch(API_BASE+"/auth?"+new URLSearchParams({name,password:adminPIn}))
+          .then(r=>r.json())
+          .then(d=>{if(d.role==="admin"){persistSession(name,"admin");sUN(name);sUR("admin");}else sPE("Incorrect password.");})
+          .catch(()=>{if(adminPIn===ADMIN_PASS){persistSession(name,"admin");sUN(name);sUR("admin");}else sPE("Incorrect password.");});
+      }else{
+        if(adminPIn===ADMIN_PASS){persistSession(name,"admin");sUN(name);sUR("admin");}else sPE("Incorrect password.");
+      }
+    }
     return(
       <div style={{fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif",maxWidth:480,margin:"60px auto",padding:"0 16px"}}>
         <div style={{background:"linear-gradient(135deg,#1e293b,#334155)",color:"#fff",padding:24,borderRadius:"12px 12px 0 0",textAlign:"center"}}>
@@ -393,30 +456,25 @@ function App(){
           <p style={{margin:"4px 0 0",opacity:0.7,fontSize:12}}>PING Project Evo • UK/JP M3 Go-Live</p>
         </div>
         <div style={{background:"#fff",border:"1px solid #e2e8f0",borderTop:0,borderRadius:"0 0 12px 12px",padding:32}}>
-          <label style={{display:"block",fontSize:12,fontWeight:600,color:"#64748b",marginBottom:4}}>Your Name</label>
-          <input value={nameIn} onChange={e=>sNI(e.target.value)} list="ppl"
-            onKeyDown={e=>{if(e.key==="Enter"&&nameIn.trim()){if(ADMIN_NAMES.some(n=>n.toLowerCase()===nameIn.trim().toLowerCase())){if(showAP){if(adminPIn===ADMIN_PASS){setAuthToken(nameIn.trim(),"admin",adminPIn);sUN(nameIn.trim());sUR("admin");sPE(false);}else sPE(true);}else sSAP(true);}else{setAuthToken(nameIn.trim(),"user","");sUN(nameIn.trim());sUR("user");}}}}
-            placeholder="Type your full name…" style={{width:"100%",padding:"10px 12px",fontSize:14,border:"1px solid #d1d5db",borderRadius:8,boxSizing:"border-box",color:"#1e293b"}}/>
-          <datalist id="ppl">{known.map(n=>(<option key={n} value={n}/>))}</datalist>
-          {showAP&&(
-            <div style={{marginTop:12}}>
+          {sessionExpired&&<div style={{marginBottom:16,padding:"10px 14px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:8,fontSize:12,color:"#92400e"}}>Your session expired after 4 hours. Please sign in again.</div>}
+          {!showAP?(
+            <div>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:"#64748b",marginBottom:4}}>Your Name</label>
+              <input value={nameIn} onChange={e=>sNI(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")handleContinue();}} list="ppl" placeholder="Type your full name" style={{width:"100%",padding:"10px 12px",fontSize:14,border:"1px solid #d1d5db",borderRadius:8,boxSizing:"border-box",color:"#1e293b"}}/>
+              <datalist id="ppl">{known.map(n=>(<option key={n} value={n}/>))}</datalist>
+              <button onClick={handleContinue} style={{marginTop:16,width:"100%",padding:12,background:"#3b82f6",color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:14}}>Continue</button>
+            </div>
+          ):(
+            <div>
+              <div style={{marginBottom:16,padding:"10px 14px",background:"#f0f9ff",border:"1px solid #bae6fd",borderRadius:8,fontSize:12,color:"#0369a1"}}>Admin access required for <strong>{nameIn}</strong></div>
               <label style={{display:"block",fontSize:12,fontWeight:600,color:"#64748b",marginBottom:4}}>Admin Password</label>
-              <input type="password" value={adminPIn} onChange={e=>sAPI(e.target.value)}
-                onKeyDown={e=>{if(e.key==="Enter"){if(adminPIn===ADMIN_PASS){setAuthToken(nameIn.trim(),"admin",adminPIn);sUN(nameIn.trim());sUR("admin");sPE(false);}else sPE(true);}}}
-                placeholder="Enter admin password" style={{width:"100%",padding:"10px 12px",fontSize:14,border:"1px solid "+(passErr?"#dc2626":"#d1d5db"),borderRadius:8,boxSizing:"border-box",color:"#1e293b"}}/>
-              {passErr&&<p style={{color:"#dc2626",fontSize:11,margin:"4px 0 0"}}>Incorrect password</p>}
+              <input type="password" value={adminPIn} onChange={e=>{sAPI(e.target.value);sPE("");}} onKeyDown={e=>{if(e.key==="Enter")handleAdminLogin();}} placeholder="Enter admin password" autoFocus style={{width:"100%",padding:"10px 12px",fontSize:14,border:"1px solid "+(passErr?"#dc2626":"#d1d5db"),borderRadius:8,boxSizing:"border-box",color:"#1e293b"}}/>
+              {passErr&&<p style={{color:"#dc2626",fontSize:12,margin:"6px 0 0"}}>{passErr}</p>}
+              <button onClick={handleAdminLogin} style={{marginTop:16,width:"100%",padding:12,background:"#f59e0b",color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:14}}>Sign In as Admin</button>
+              <button onClick={()=>{sSAP(false);sAPI("");sPE("");}} style={{marginTop:8,width:"100%",padding:10,background:"#f8fafc",color:"#64748b",border:"1px solid #e2e8f0",borderRadius:8,cursor:"pointer",fontWeight:600,fontSize:13}}>Back</button>
             </div>
           )}
-          <button onClick={()=>{
-            if(!nameIn.trim())return;
-            if(ADMIN_NAMES.some(n=>n.toLowerCase()===nameIn.trim().toLowerCase())){
-              if(showAP){if(adminPIn===ADMIN_PASS){setAuthToken(nameIn.trim(),"admin",adminPIn);sUN(nameIn.trim());sUR("admin");sPE(false);}else sPE(true);}
-              else sSAP(true);
-            }else{setAuthToken(nameIn.trim(),"user","");sUN(nameIn.trim());sUR("user");}
-          }} style={{marginTop:16,width:"100%",padding:12,background:"#3b82f6",color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:14}}>
-            Continue →
-          </button>
-          {!showAP&&<p style={{textAlign:"center",marginTop:12,fontSize:11,color:"#94a3b8"}}>Admins: enter your name, you'll be prompted for the password</p>}
+          <p style={{textAlign:"center",marginTop:16,fontSize:11,color:"#94a3b8"}}>Sessions expire after 4 hours of inactivity.</p>
         </div>
       </div>
     );
@@ -483,6 +541,38 @@ function App(){
     );
   }
 
+  // ── Summary Modal ──
+  function SummaryModal(){
+    return(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{background:"#fff",borderRadius:12,width:"100%",maxWidth:680,maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+          <div style={{padding:"16px 20px",borderBottom:"1px solid #e2e8f0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+            <div>
+              <h2 style={{margin:0,fontSize:16,fontWeight:700,color:"#1e293b"}}>Standup Summary</h2>
+              <p style={{margin:"2px 0 0",fontSize:11,color:"#64748b"}}>{sf.length} tasks - {focD?("Date: "+focD):"Current filters"}</p>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              {summaryText&&!summaryLoading&&<button onClick={copyToClipboard} style={{padding:"6px 14px",background:"#3b82f6",color:"#fff",border:"none",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600}}>Copy</button>}
+              <button onClick={()=>{setSS(false);setST("");}} style={{padding:"6px 14px",background:"#f1f5f9",color:"#475569",border:"none",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600}}>Close</button>
+            </div>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:20}}>
+            {summaryLoading?(
+              <div style={{textAlign:"center",padding:40}}>
+                <div style={{fontSize:32,marginBottom:12}}>⏳</div>
+                <p style={{color:"#64748b",fontSize:14}}>Generating summary...</p>
+              </div>
+            ):summaryText?(
+              <pre style={{whiteSpace:"pre-wrap",fontSize:13,lineHeight:1.7,color:"#1e293b",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif",margin:0}}>{summaryText}</pre>
+            ):(
+              <div style={{textAlign:"center",padding:40,color:"#94a3b8"}}>No summary yet</div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ---- SIDE PANEL ----
   function SPanel(){
     const t=tasks.find(x=>x.id===panel);
@@ -500,9 +590,9 @@ function App(){
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
             <div style={{flex:1}}>
               <div style={{fontFamily:"monospace",fontSize:11,fontWeight:700,color:st.c}}>{t.id}</div>
-              <div style={{fontSize:12,fontWeight:600,color:"#1e293b",marginTop:2,lineHeight:1.3}}>{t.d.slice(0,80)}{t.d.length>80?"…":""}</div>
+              <div style={{fontSize:12,fontWeight:600,color:"#1e293b",marginTop:2,lineHeight:1.3}}>{t.d.slice(0,80)}{t.d.length>80?"...":""}</div>
             </div>
-            <button onClick={()=>sPanel(null)} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:18,padding:0,flexShrink:0}}>×</button>
+            <button onClick={()=>sPanel(null)} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:18,padding:0,flexShrink:0}}>x</button>
           </div>
           <div style={{display:"flex",gap:4,marginTop:8,flexWrap:"wrap"}}>
             {t.ui&&<span style={{fontSize:8,background:"#fef2f2",color:"#dc2626",padding:"2px 5px",borderRadius:3,fontWeight:700}}>US/CA</span>}
@@ -593,10 +683,10 @@ function App(){
             const done=dep&&isDone(dep);
             return(
               <div key={depId} style={{display:"flex",alignItems:"center",gap:4,marginBottom:3}}>
-                <span style={{fontSize:9,color:done?"#10b981":"#ea580c",fontWeight:700}}>{done?"✓":"⚠"}</span>
+                <span style={{fontSize:9,color:done?"#10b981":"#ea580c",fontWeight:700}}>{done?"V":"!"}</span>
                 <span style={{fontSize:10,fontFamily:"monospace",color:done?"#16a34a":"#ea580c",cursor:"pointer"}} onClick={()=>sPanel(depId)}>{depId}</span>
                 {dep&&<span style={{fontSize:9,color:"#64748b"}}>{dep.s.split("-")[1]||dep.s}</span>}
-                <button onClick={()=>removeDep(t.id,depId)} style={{marginLeft:"auto",background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:11,padding:0}}>×</button>
+                <button onClick={()=>removeDep(t.id,depId)} style={{marginLeft:"auto",background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:11,padding:0}}>x</button>
               </div>
             );
           })}
@@ -684,12 +774,13 @@ function App(){
               <p style={{margin:0,fontSize:9,opacity:0.6}}>{tasks.length} tasks • {uName}{saving?" • Saving…":""}{USE_API&&lastSync?" • Synced "+Math.round((new Date()-lastSync)/60000)+"m ago":""}</p>
             </div>
             <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
-              {isAdmin&&<button onClick={()=>sAM(true)} style={{padding:"3px 8px",background:"#10b981",borderRadius:4,cursor:"pointer",fontSize:9,fontWeight:700,color:"#fff",border:"none"}}>+ Add</button>}
-              {isAdmin&&<label style={{padding:"3px 8px",background:"rgba(255,255,255,0.15)",borderRadius:4,cursor:"pointer",fontSize:9,fontWeight:600,color:"#fff",border:"1px solid rgba(255,255,255,0.2)"}}>Re-upload<input type="file" accept=".csv,.tsv,.txt" onChange={handleFile} style={{display:"none"}}/></label>}
-              {isAdmin&&<button onClick={exportCSV} style={{padding:"3px 8px",background:"rgba(255,255,255,0.15)",borderRadius:4,cursor:"pointer",fontSize:9,fontWeight:600,color:"#fff",border:"1px solid rgba(255,255,255,0.2)"}}>Export CSV</button>}
-              <button onClick={()=>sSLog(!showLog)} style={{padding:"3px 8px",background:showLog?"rgba(99,179,237,0.3)":"rgba(255,255,255,0.15)",borderRadius:4,cursor:"pointer",fontSize:9,fontWeight:600,color:"#fff",border:"1px solid rgba(255,255,255,0.2)"}}>{showLog?"✕ Log":"📝 Log"}</button>
-              <button onClick={()=>sSH(!showHelp)} style={{padding:"3px 8px",background:showHelp?"rgba(99,179,237,0.3)":"rgba(255,255,255,0.15)",borderRadius:4,cursor:"pointer",fontSize:9,fontWeight:600,color:"#fff",border:"1px solid rgba(255,255,255,0.2)"}}>? Help</button>
-              <button onClick={()=>{sUN("");sUR("user");sPanel(null);}} style={{padding:"3px 8px",background:isAdmin?"rgba(251,191,36,0.25)":"rgba(255,255,255,0.15)",borderRadius:4,cursor:"pointer",fontSize:9,fontWeight:600,color:"#fff",border:isAdmin?"1px solid rgba(251,191,36,0.5)":"1px solid rgba(255,255,255,0.2)"}}>{isAdmin?"⭐ ":""}{uName}</button>
+              {isAdmin&&<button onClick={()=>sAM(true)} style={{padding:"3px 8px",background:"#10b981",borderRadius:4,cursor:"pointer",fontSize:10,fontWeight:700,color:"#fff",border:"none"}}>+ Add</button>}
+              {isAdmin&&<label style={{padding:"3px 8px",background:"rgba(255,255,255,0.15)",borderRadius:4,cursor:"pointer",fontSize:10,fontWeight:600,color:"#fff",border:"1px solid rgba(255,255,255,0.2)"}}>Re-upload<input type="file" accept=".csv,.tsv,.txt" onChange={handleFile} style={{display:"none"}}/></label>}
+              {isAdmin&&<button onClick={exportCSV} style={{padding:"3px 8px",background:"rgba(255,255,255,0.15)",borderRadius:4,cursor:"pointer",fontSize:10,fontWeight:600,color:"#fff",border:"1px solid rgba(255,255,255,0.2)"}}>Export CSV</button>}
+              <button onClick={handleGenerateSummary} style={{padding:"3px 8px",background:"rgba(99,179,237,0.25)",borderRadius:4,cursor:"pointer",fontSize:10,fontWeight:600,color:"#fff",border:"1px solid rgba(99,179,237,0.4)"}}>Standup Summary</button>
+              <button onClick={()=>sSLog(!showLog)} style={{padding:"3px 8px",background:showLog?"rgba(99,179,237,0.3)":"rgba(255,255,255,0.15)",borderRadius:4,cursor:"pointer",fontSize:10,fontWeight:600,color:"#fff",border:"1px solid rgba(255,255,255,0.2)"}}>{showLog?"X Log":"Log"}</button>
+              <button onClick={()=>sSH(!showHelp)} style={{padding:"3px 8px",background:showHelp?"rgba(99,179,237,0.3)":"rgba(255,255,255,0.15)",borderRadius:4,cursor:"pointer",fontSize:10,fontWeight:600,color:"#fff",border:"1px solid rgba(255,255,255,0.2)"}}>? Help</button>
+              <button onClick={clearSession} style={{padding:"3px 8px",background:isAdmin?"rgba(251,191,36,0.25)":"rgba(255,255,255,0.15)",borderRadius:4,cursor:"pointer",fontSize:10,fontWeight:600,color:"#fff",border:isAdmin?"1px solid rgba(251,191,36,0.5)":"1px solid rgba(255,255,255,0.2)"}}>{isAdmin?"* ":""}{uName}</button>
             </div>
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",paddingTop:4,borderTop:"1px solid rgba(255,255,255,0.15)"}}>
@@ -824,7 +915,7 @@ function App(){
         <div style={{width:340,flexShrink:0,background:"#fff",borderLeft:"2px solid #e2e8f0",overflowY:"auto",display:"flex",flexDirection:"column"}}>
           <div style={{padding:"10px 14px",borderBottom:"1px solid #e2e8f0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
             <h3 style={{margin:0,fontSize:13,fontWeight:700}}>Activity Log</h3>
-            <button onClick={()=>sSLog(false)} style={{background:"none",border:"none",cursor:"pointer",color:"#94a3b8",fontSize:16}}>×</button>
+            <button onClick={()=>sSLog(false)} style={{background:"none",border:"none",cursor:"pointer",color:"#94a3b8",fontSize:16}}>x</button>
           </div>
           <div style={{flex:1,overflowY:"auto",padding:8}}>
             {actLog.map(e=>(
@@ -838,6 +929,7 @@ function App(){
         </div>
       )}
       {addM&&<AddModal/>}
+      {showSummary&&<SummaryModal/>}
     </div>
   );
 }
